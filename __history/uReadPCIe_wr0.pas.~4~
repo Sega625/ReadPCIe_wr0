@@ -1,0 +1,260 @@
+unit uReadPCIe_wr0;
+
+interface
+
+uses
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.ComCtrls, WinRing0;
+
+//const
+//  {$IFDEF WIN32}
+//    LIB_INPOUT = 'inpout32.dll';
+//  {$ENDIF}
+//  {$IFDEF WIN64}
+//    LIB_INPOUT = 'inpoutx64.dll';
+//  {$ENDIF}
+//
+//  procedure Out32(PortAddress: SHORT; Data: SHORT);	stdcall; external LIB_INPOUT;
+//  function  Inp32(PortAddress: SHORT): SHORT;      	stdcall; external LIB_INPOUT;
+//
+//  function IsInpOutDriverOpen(): BOOL; stdcall; external LIB_INPOUT;  // Returns TRUE if the InpOut driver was opened successfully
+//  function IsXP64Bit(): BOOL;	         stdcall; external LIB_INPOUT; 	// Returns TRUE if the OS is 64bit (x64) Windows.
+//
+//  // DLLPortIO function support
+//  function  DlPortReadPortUchar  (port: WORD): UCHAR;         stdcall; external LIB_INPOUT;
+//  procedure DlPortWritePortUchar (port: WORD; Value: UCHAR);  stdcall; external LIB_INPOUT;
+//  function  DlPortReadPortUshort (port: WORD): WORD;          stdcall; external LIB_INPOUT;
+//  procedure DlPortWritePortUshort(port: WORD; Value: WORD);	  stdcall; external LIB_INPOUT;
+//  function  DlPortReadPortUlong  (port: ULONG): ULONG;        stdcall; external LIB_INPOUT;
+//  procedure DlPortWritePortUlong (port: ULONG; Value: ULONG);	stdcall; external LIB_INPOUT;
+//
+//  // WinIO function support (Untested and probably does NOT work - esp. on x64!)
+//  function MapPhysToLin(pbPhysAddr: PBYTE; dwPhysSize: DWORD; pPhysicalMemoryHandle: PHANDLE): PBYTE;	stdcall; external LIB_INPOUT;
+//  function UnmapPhysicalMemory(PhysicalMemoryHandle: THANDLE; pbLinAddr: PBYTE): BOOL;                stdcall; external LIB_INPOUT;
+//  function GetPhysLong(pbPhysAddr: PBYTE; pdwPhysVal: PDWORD): BOOL;                                  stdcall; external LIB_INPOUT;
+//  function SetPhysLong(pbPhysAddr: PBYTE; dwPhysVal: DWORD): BOOL;	                                  stdcall; external LIB_INPOUT;
+
+type
+  TForm1 = class(TForm)
+    ReadBtn: TButton;
+    RAddrEdit: TEdit;
+    MemLV: TListView;
+    Label20: TLabel;
+    WriteBtn: TButton;
+    WAddrEdit: TEdit;
+    Label1: TLabel;
+    All0Btn: TButton;
+    All1Btn: TButton;
+    WriteBtn2: TButton;
+    procedure ReadBtnClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure EditKeyPress(Sender: TObject; var Key: Char);
+    procedure WriteBtnClick(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure All0BtnClick(Sender: TObject);
+    procedure All1BtnClick(Sender: TObject);
+    procedure WriteBtn2Click(Sender: TObject);
+  private
+    Ring0: TWinRing0;
+    L: array [0..31] of TLabel;
+
+    procedure LBtnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+
+    function GetDataFromLabs(): Int64;
+    function ByteToStr(Val: byte; Digits: byte=8): String;
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+procedure TForm1.FormCreate(Sender: TObject);
+var
+  n, offset: byte;
+begin
+{
+  if not IsInpOutDriverOpen then
+  begin
+    MessageDlg('Îרטבךא הנאיגונא InpOut32', mtError, [mbOK], 0);
+    Application.Terminate;
+  end;
+}
+
+  Ring0 := TWinRing0.Create();
+
+  offset := 0;
+  for n := 0 to 31 do
+  begin
+    L[n] := TLabel.Create(self);
+    with L[n] do
+    begin
+      if (n mod 4) = 0 then Inc(offset, 4);
+      Left := 8+n*9+offset;
+      Top  := 200;
+      Parent := Form1;
+
+      Font.Size := 12;
+      Font.Color := clBlue;
+      Caption := '0';
+
+      Tag := n;
+//      OnClick := LBtnClick;
+      OnMouseDown := LBtnMouseDown;
+    end;
+  end;
+
+  MemLV.Columns[0].Width := 50;
+  MemLV.Columns[0].MaxWidth := 50;
+  MemLV.Columns[0].MinWidth := 50;
+  MemLV.Columns[1].Width := 80;
+  MemLV.Columns[1].MaxWidth := 80;
+  MemLV.Columns[1].MinWidth := 80;
+  for n := 2 to 5 do
+  begin
+    MemLV.Columns[n].Width := 75;
+    MemLV.Columns[n].MaxWidth := 75;
+    MemLV.Columns[n].MinWidth := 75;
+  end;
+  MemLV.Columns[6].Width := 80;
+  MemLV.Columns[6].MaxWidth := 80;
+  MemLV.Columns[6].MinWidth := 80;
+end;
+
+procedure TForm1.FormDestroy(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+  begin
+    L[n].Free;
+  end;
+
+  Ring0.Free();
+end;
+
+procedure TForm1.LBtnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  if TLabel(Sender).Caption = '0' then TLabel(Sender).Caption := '1'
+                                  else TLabel(Sender).Caption := '0';
+end;
+
+procedure TForm1.ReadBtnClick(Sender: TObject);
+var
+  n, i: DWORD;
+  Data: ULONG;
+  Address: ULONG;
+  Str: String;
+begin
+  MemLV.Clear;
+
+  Address := StrToInt64('$'+RAddrEdit.Text);
+  for i := 0 to $2000 do
+  begin
+    MemLV.Items.Add.Caption := IntToStr(i+1);
+
+    Str := '';
+    MemLV.Items[MemLV.Items.Count-1].SubItems.add(IntToHex(Address)); // Àהנוס
+    Data := Ring0.ReadIoPortDword(Address);
+//    Data := DlPortReadPortUlong(Address);
+
+    for n := 0 to 3 do
+    begin
+      MemLV.Items[MemLV.Items.Count-1].SubItems.add(ByteToStr(Data and $FF));
+      if (Data and $FF) <> 0 then Str := Str+Chr(Data and $FF)
+                             else Str := Str+' ';
+      Data := Data shr 8;
+    end;
+    MemLV.Items[MemLV.Items.Count-1].SubItems.add(Str);
+
+    if Address = $FFFFFFFF then Break;
+
+    Inc(Address, 4);
+  end;
+end;
+
+
+procedure TForm1.WriteBtnClick(Sender: TObject);
+var
+  Data, Data2: Int64;
+  Address: ULONG;
+
+begin
+  Address := StrToInt64('$'+WAddrEdit.Text);
+  Data := DWORD(GetDataFromLabs());
+  Ring0.WriteIoPortDword(Address, Data);
+//  ShowMessage(IntToStr(Address)+' - '+IntToStr(Data));
+//  DlPortWritePortUlong(Address, Data);
+//  DlPortWritePortUshort(Address, Data);
+
+end;
+
+procedure TForm1.WriteBtn2Click(Sender: TObject);
+var
+  Data: Int64;
+  Address: ULONG;
+begin
+  Address := StrToInt64('$'+WAddrEdit.Text);
+  Data := ULONG(GetDataFromLabs());
+  ShowMessage(IntToStr(Address)+' - '+IntToStr(WORD(Data))+'; '+IntToStr(Data shr 16));
+//  DlPortWritePortUlong(Address, Data);
+//  DlPortWritePortUshort(Address, WORD(Data));
+//  DlPortWritePortUshort(Address+4, Data shr 16);
+end;
+
+
+
+procedure TForm1.EditKeyPress(Sender: TObject; var Key: Char);
+begin
+   if not (char (Key) in ['a'..'f', 'A'..'F', '0'..'9', #8]) then Key := #0;
+end;
+
+
+function TForm1.GetDataFromLabs: Int64;
+var
+  n: byte;
+begin
+  Result := 0;
+
+  for n := 0 to 31 do
+  begin
+    Result := Result+(StrToInt(L[31-n].Caption) shl n);
+  end;
+end;
+
+
+
+procedure TForm1.All0BtnClick(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+    L[n].Caption := '0';
+end;
+
+procedure TForm1.All1BtnClick(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+    L[n].Caption := '1';
+end;
+
+function TForm1.ByteToStr(Val: byte; Digits: byte=8): String;
+var
+  n: byte;
+begin
+  Result := '';
+
+  for n := Digits-1 downto 0 do
+  begin
+    Result := Result+IntTostr((Val shr n) and 1);
+  end;
+end;
+
+
+end.

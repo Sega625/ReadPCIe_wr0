@@ -1,0 +1,354 @@
+unit uWinRing0;
+
+interface
+
+uses Winapi.Windows, Structs;
+
+
+
+
+type
+  TDLL = class
+  private
+    Status: Boolean;
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    function IsLoaded(): Boolean;
+    function GetStatus(): DWORD;
+    function GetVersion(var maj, min, rev, rel: byte): DWORD;
+
+    function GetDrvVersion(var maj, min, rev, rel: byte): DWORD;
+    function GetDrvType(): DWORD;
+  end;
+
+
+  TPort = class
+  private
+
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    function  ReadDword(const adrr: WORD): DWORD;
+    procedure WriteDword(const adrr: WORD; const val: DWORD);
+  end;
+
+
+  TPCI = class
+  private
+
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    procedure SetMaxBusIndex(const max: byte);
+    function  FindDeviceById(const vendorId, deviceId: WORD; const index: byte): DWORD;
+    function  FindDeviceByClass(const baseClass, subClass, programIf, index: byte): DWORD;
+
+    function  ReadConfigByte  (const pciAddr: DWORD; const regAddr: byte): byte;
+    function  ReadConfigWord  (const pciAddr: DWORD; const regAddr: byte): WORD;
+    function  ReadConfigDWord (const pciAddr: DWORD; const regAddr: byte): DWORD;
+    function  ReadConfigByteEx (const pciAddr, regAddr: DWORD; const value: byte):  Boolean;
+    function  ReadConfigWORDEx (const pciAddr, regAddr: DWORD; const value: WORD):  Boolean;
+    function  ReadConfigDWORDEx(const pciAddr, regAddr: DWORD; const value: DWORD): Boolean;
+
+    procedure WriteConfigByte (const pciAddr: DWORD; const regAddr: byte; const value: byte);
+    procedure WriteConfigWord (const pciAddr: DWORD; const regAddr: byte; const value: WORD);
+    procedure WriteConfigDWord(const pciAddr: DWORD; const regAddr: byte; const value: DWORD);
+    function  WriteConfigByteEx (const pciAddr, regAddr: DWORD; const value: BYTE):  Boolean;
+    function  WriteConfigWordEx (const pciAddr, regAddr: DWORD; const value: WORD):  Boolean;
+    function  WriteConfigDWordEx(const pciAddr, regAddr: DWORD; const value: DWORD): Boolean;
+  end;
+
+  TCPU = class
+  private
+
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    function GetId(): Boolean;
+    function GetMSR(): Boolean;
+    function GetTSC(): Boolean;
+  end;
+
+{
+  TMemory = class
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    function ReadDmi                                (const buffer: byte; const count, unitSize: DWORD): DWORD;
+    function ReadPhysical (const address: DWORD_PTR; const buffer: byte; const count, unitSize: DWORD): DWORD;
+    function WritePhysical(const address: DWORD_PTR; const buffer: byte; const count ,unitSize: DWORD): DWORD;
+  end;
+}
+
+  TWinRing0 = class
+  public
+    DLL:  TDLL;
+    Port: TPort;
+    PCI:  TPCI;
+//    Memory: TMemory;
+
+    constructor Create();
+    destructor  Destroy(); override;
+  end;
+
+
+implementation
+
+
+{ TWinRing }
+
+constructor TWinRing0.Create;
+begin
+  inherited Create();
+
+  DLL  := TDLL.Create();
+  Port := TPort.Create();
+  PCI  := TPCI.Create();
+//  Memory := TMemory.Create();
+end;
+
+destructor TWinRing0.Destroy;
+begin
+//  Memory.Free();
+  PCI.Free();
+  Port.Free();
+  DLL.Free();
+
+  inherited;
+end;
+
+
+
+{ TDLL }
+
+constructor TDLL.Create;
+begin
+  inherited Create();
+
+  Status := InitializeOls();
+end;
+
+destructor TDLL.Destroy;
+begin
+  DeinitializeOls();
+
+  inherited;
+end;
+
+
+function TDLL.IsLoaded: Boolean;
+begin
+  Result := Status;
+end;
+
+function TDLL.GetStatus: DWORD;
+begin
+  Result := GetDllStatus();
+end;
+
+function TDLL.GetVersion(var maj, min, rev, rel: byte): DWORD;
+begin
+  Result := GetDllVersion(@maj, @min, @rev, @rel);
+end;
+
+
+function TDLL.GetDrvVersion(var maj, min, rev, rel: byte): DWORD;
+begin
+  Result := GetDriverVersion(@maj, @min, @rev, @rel);
+end;
+
+function TDLL.GetDrvType: DWORD;
+begin
+  Result := GetDriverType();
+end;
+
+
+
+{ TPort }
+
+constructor TPort.Create;
+begin
+  inherited Create();
+end;
+
+destructor TPort.Destroy;
+begin
+
+  inherited;
+end;
+
+
+function TPort.ReadDword(const adrr: WORD): DWORD;
+begin
+  Result := ReadIoPortDword(adrr);
+end;
+
+procedure TPort.WriteDword(const adrr: WORD; const val: DWORD);
+begin
+  WriteIoPortDword(adrr, val);
+end;
+
+
+
+{ TPCI }
+
+constructor TPCI.Create;
+begin
+  inherited Create();
+end;
+
+destructor TPCI.Destroy;
+begin
+
+  inherited;
+end;
+
+
+procedure TPCI.SetMaxBusIndex(const max: byte);
+begin
+  SetPciMaxBusIndex(max);
+end;
+
+function TPCI.FindDeviceById(const vendorId, deviceId: WORD; const index: byte): DWORD;
+begin
+  Result := FindPciDeviceById(vendorId, deviceId, index);
+end;
+
+function TPCI.FindDeviceByClass(const baseClass, subClass, programIf, index: byte): DWORD;
+begin
+  Result := FindPciDeviceByClass(baseClass, subClass, programIf, index);
+end;
+
+
+function TPCI.ReadConfigByte(const pciAddr: DWORD; const regAddr: byte): byte;
+begin
+  Result := ReadPciConfigByte(pciAddr, regAddr);
+end;
+
+function TPCI.ReadConfigWord(const pciAddr: DWORD; const regAddr: byte): WORD;
+begin
+  Result := ReadPciConfigWord(pciAddr, regAddr);
+end;
+
+function TPCI.ReadConfigDWord(const pciAddr: DWORD; const regAddr: byte): DWORD;
+begin
+  Result := ReadPciConfigDWord(pciAddr, regAddr);
+end;
+
+function TPCI.ReadConfigByteEx(const pciAddr, regAddr: DWORD; const value: byte): Boolean;
+begin
+  Result := ReadPciConfigByteEx(pciAddr, regAddr, @value);
+end;
+
+function TPCI.ReadConfigWORDEx(const pciAddr, regAddr: DWORD; const value: WORD): Boolean;
+begin
+  Result := ReadPciConfigWordEx(pciAddr, regAddr, @value);
+end;
+
+function TPCI.ReadConfigDWORDEx(const pciAddr, regAddr: DWORD; const value: DWORD): Boolean;
+begin
+  Result := ReadPciConfigDWordEx(pciAddr, regAddr, @value);
+end;
+
+
+procedure TPCI.WriteConfigByte(const pciAddr: DWORD; const regAddr: byte; const value: byte);
+begin
+  WritePciConfigByte(pciAddr, regAddr, value);
+end;
+
+procedure TPCI.WriteConfigWord(const pciAddr: DWORD; const regAddr: byte; const value: WORD);
+begin
+  WritePciConfigWord(pciAddr, regAddr, value);
+end;
+
+procedure TPCI.WriteConfigDWord(const pciAddr: DWORD; const regAddr: byte; const value: DWORD);
+begin
+  WritePciConfigDWord(pciAddr, regAddr, value);
+end;
+
+function TPCI.WriteConfigByteEx(const pciAddr, regAddr: DWORD; const value: BYTE): Boolean;
+begin
+  Result := WritePciConfigByteEx(pciAddr, regAddr, value);
+end;
+
+function TPCI.WriteConfigWordEx(const pciAddr, regAddr: DWORD; const value: WORD): Boolean;
+begin
+  Result := WritePciConfigWordEx(pciAddr, regAddr, value);
+end;
+
+function TPCI.WriteConfigDWordEx(const pciAddr, regAddr: DWORD; const value: DWORD): Boolean;
+begin
+  Result := WritePciConfigDwordEx(pciAddr, regAddr, value);
+end;
+
+
+
+{ TCPU }
+
+constructor TCPU.Create;
+begin
+  inherited Create();
+end;
+
+destructor TCPU.Destroy;
+begin
+
+  inherited;
+end;
+
+
+function TCPU.GetId: Boolean;
+begin
+  Result := IsCpuid();
+end;
+
+function TCPU.GetMSR: Boolean;
+begin
+  Result := IsMsr();
+end;
+
+function TCPU.GetTSC: Boolean;
+begin
+  Result := IsTsc();
+end;
+
+
+
+{ TMemory }
+{
+constructor TMemory.Create;
+begin
+  inherited Create();
+end;
+
+destructor TMemory.Destroy;
+begin
+
+  inherited;
+end;
+
+
+function TMemory.ReadDmi(const buffer: byte; const count, unitSize: DWORD): DWORD;
+begin
+  Result := ReadDmiMemory(@buffer, count, unitSize);
+end;
+
+function TMemory.ReadPhysical(const address: DWORD_PTR; const buffer: byte; const count, unitSize: DWORD): DWORD;
+begin
+  Result := ReadPhysicalMemory(address, @buffer, count, unitSize);
+end;
+
+function TMemory.WritePhysical(const address: DWORD_PTR; const buffer: byte; const count, unitSize: DWORD): DWORD;
+begin
+  Result := WritePhysicalMemory(address, @buffer, count, unitSize);
+end;
+}
+
+
+end.

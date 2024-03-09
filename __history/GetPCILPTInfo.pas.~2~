@@ -1,0 +1,26 @@
+unit GetPCILPTInfo;
+
+interface
+
+uses
+  Winapi.Windows;
+
+type
+  TLPTInfo = record
+    Name    : string;
+    FullName: string;
+    VendorID: WORD;
+    DeviceID: WORD;
+    BusN    : byte;
+    DevN    : byte;
+    FuncN   : byte;
+    Present : Boolean;
+    RegStr  : string;
+    PrefStr : string;
+  end;
+
+
+
+implementation
+
+end.

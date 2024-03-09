@@ -1,0 +1,657 @@
+unit uReadPCIe_wr0;
+
+interface
+
+uses
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.ComCtrls, System.Win.Registry, uWinRing0;
+
+const
+  IOCTL_IEEE1284_GET_MODE        = $160014;
+  IOCTL_IEEE1284_NEGOTIATE       = $160018;
+  IOCTL_PAR_GET_DEFAULT_MODES    = $160028;
+  IOCTL_PAR_GET_DEVICE_CAPS      = $160024;
+  IOCTL_PAR_IS_PORT_FREE         = $160054;
+  IOCTL_PAR_QUERY_DEVICE_ID      = $16000C;
+  IOCTL_PAR_QUERY_DEVICE_ID_SIZE = $160010;
+  IOCTL_PAR_QUERY_INFORMATION    = $160004;
+  IOCTL_PAR_QUERY_LOCATION       = $160058;
+  IOCTL_PAR_QUERY_RAW_DEVICE_ID  = $160030;
+  IOCTL_PAR_SET_INFORMATION      = $160008;
+  IOCTL_PAR_SET_READ_ADDRESS     = $160020;
+  IOCTL_PAR_SET_WRITE_ADDRESS    = $16001C;
+  IOCTL_SERIAL_GET_TIMEOUTS      = $1B001C;
+  IOCTL_SERIAL_SET_TIMEOUTS      = $1B0020;
+
+	NONE	= $0000;
+
+// SPP modes
+	CENTRONICS	= $0001;	// Только для записи
+	IEEE_COMPATIBILITY	= $0002;	// Только для записи
+	NIBBLE	= $0004;	// Только для чтения
+	CHANNEL_NIBBLE	= $0008;	// Только для чтения
+	BYTE_BIDIR	= $0010;	// Только для чтения
+
+// EPP modes
+	EPP_HW	= $0020;	// Аппаратный EPP
+	EPP_SW	= $0040;	// Программный EPP
+
+// ECP modes
+	BOUNDED_ECP	= $0080;	// Упрощенный ECP
+	ECP_HW_NOIRQ	= $0100;	// Аппаратный ECP без IRQ
+	ECP_HW_IRQ	= $0200;	// Аппаратный ECP с IRQ
+	ECP_SW	= $0400;	// Программный ECP
+
+type
+  PARCLASS_NEGOTIATION_MASK = record
+    usReadMask: word;
+    usWriteMask: word;
+  end;
+  PPARCLASS_NEGOTIATION_MASK = ^PARCLASS_NEGOTIATION_MASK;
+
+
+
+  TLPTInfo = record
+    VendorID: WORD;
+    DeviceID: WORD;
+    Name: String;
+  end;
+
+  TPCIReg = record
+    VendorID:    WORD;
+    DeviceID:    WORD;
+    Command:     WORD;
+    Status:      WORD;
+    RevisionID:  byte;
+    ClassCode:   DWORD;
+    Undef1:      DWORD;
+    IOBaseAddr0: DWORD;
+    Undef2:      DWORD;
+    IOBaseAddr2: DWORD;
+    Undef31:     DWORD;
+    Undef32:     DWORD;
+    Undef33:     DWORD;
+    Undef34:     DWORD;
+    subVendorID: WORD;
+    subDeviceID: WORD;
+    Undef41:     DWORD;
+    Undef42:     DWORD;
+    Undef43:     DWORD;
+    InteruptLinePin: DWORD;
+  end;
+
+  TForm1 = class(TForm)
+    ReadBtn: TButton;
+    RAddrEdit: TEdit;
+    MemLV: TListView;
+    Label20: TLabel;
+    WriteBtn: TButton;
+    WAddrEdit: TEdit;
+    Label1: TLabel;
+    All0Btn: TButton;
+    All1Btn: TButton;
+    GroupBox1: TGroupBox;
+    RegReadBtn: TButton;
+    RegLV: TListView;
+    sRegLV: TListView;
+    Button1: TButton;
+    LPTPortsCB: TComboBox;
+    PortLab: TLabel;
+    Memo1: TMemo;
+
+    procedure ReadBtnClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure EditKeyPress(Sender: TObject; var Key: Char);
+    procedure WriteBtnClick(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure All0BtnClick(Sender: TObject);
+    procedure All1BtnClick(Sender: TObject);
+    procedure RegReadBtnClick(Sender: TObject);
+    procedure Button1Click(Sender: TObject);
+    procedure LBtnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+  private
+    LPTHandle: THandle;
+    Ring0: TWinRing0;
+    PCIReg: TPCIReg;
+    L: array [0..31] of TLabel;
+    LPTInfo: array of TLPTInfo; // Информация о lpt портах
+
+    function GetDataFromLabs(): Int64;
+    function ByteToStr(Val: byte; Digits: byte=8): string;
+
+    function GetLPTInfo(iLPT: TLPTInfo): Boolean;
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+procedure TForm1.FormCreate(Sender: TObject);
+var
+  Mode: PARCLASS_NEGOTIATION_MASK;
+  lpOverlapped: POverlapped;
+  ret: DWORD;
+
+  Address: byte;
+
+  n, offset: byte;
+//  LPTHandle: THandle;
+
+  Ini: TRegIniFile;
+begin
+  Ring0 := TWinRing0.Create();
+  if not Ring0.DLL.IsLoaded then
+  begin
+    MessageDlg('Ошибка драйвера WRing0', mtError, [mbOK], 0);
+    Application.Terminate;
+  end;
+
+  SetLength(LPTInfo, 0);
+  for n := 0 to 9 do
+  begin
+    LPTHandle := CreateFile(PChar('LPT'+IntToStr(n+1)),
+      GENERIC_READ or GENERIC_WRITE, 0, nil, OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED, 0);
+
+    try
+      if LPTHandle <> INVALID_HANDLE_VALUE then
+      begin
+        LPTPortsCB.Items.Add('LPT'+IntToStr(n+1));
+        LPTPortsCB.ItemIndex := 0;
+
+        SetLength(LPTInfo, Length(LPTInfo)+1);
+        LPTInfo[Length(LPTInfo)-1].Name := 'LPT'+IntToStr(n+1); // Добавим информацию об lpt порте
+
+
+
+//        DeviceIoControl(LPTHandle, IOCTL_PAR_QUERY_DEVICE_ID,
+//        DeviceIoControl(LPTHandle, IOCTL_IEEE1284_GET_MODE, nil, 0, @Mode, sizeof(PARCLASS_NEGOTIATION_MASK), ret, lpOverlapped);
+//        DeviceIoControl(LPTHandle, IOCTL_IEEE1284_GET_MODE, nil, 0, @Mode, sizeof(PARCLASS_NEGOTIATION_MASK), ret, nil);
+
+//        DeviceIoControl(LPTHandle, IOCTL_PAR_QUERY_DEVICE_ID, nil, 0, @Mode, sizeof(PARCLASS_NEGOTIATION_MASK), ret, nil);
+
+//        ShowMessage('LPT'+IntToStr(n+1)+': '+IntToStr(Mode.usReadMask)+'   '+IntToStr(Mode.usWriteMask));
+
+ //       Address := $AA;
+ //       DeviceIoControl(LPTHandle, IOCTL_PAR_SET_WRITE_ADDRESS, @Address, 1, nil, 0, ret, nil);
+ //       WriteFile(LPTHandle, [$55], 1, ret, nil);
+      end;                                                          //
+    finally                                                         //
+//      CloseHandle(LPTHandle);                                       //
+    end;                                                            //
+  end;
+
+
+
+//  ShowMessage(GetLPTInfo('LPT2').Name);
+
+
+  offset := 0;
+  for n := 0 to 31 do
+  begin
+    L[n] := TLabel.Create(self);
+    with L[n] do
+    begin
+      if (n mod 4) = 0 then Inc(offset, 4);
+      Left := 8+n*9+offset;
+      Top  := 90;
+      Parent := Form1;
+
+      Font.Size := 12;
+      Font.Color := clBlue;
+      Caption := '0';
+
+      Tag := n;
+
+      OnMouseDown := LBtnMouseDown;
+    end;
+  end;
+
+  MemLV.Columns[0].Width := 50;
+  MemLV.Columns[0].MaxWidth := 50;
+  MemLV.Columns[0].MinWidth := 50;
+  MemLV.Columns[1].Width := 80;
+  MemLV.Columns[1].MaxWidth := 80;
+  MemLV.Columns[1].MinWidth := 80;
+  for n := 2 to 5 do
+  begin
+    MemLV.Columns[n].Width := 75;
+    MemLV.Columns[n].MaxWidth := 75;
+    MemLV.Columns[n].MinWidth := 75;
+  end;
+  MemLV.Columns[6].Width := 80;
+  MemLV.Columns[6].MaxWidth := 80;
+  MemLV.Columns[6].MinWidth := 80;
+
+  RegLV.Columns[0].Width := 30;
+  RegLV.Columns[0].MaxWidth := 30;
+  RegLV.Columns[0].MinWidth := 30;
+  for n := 1 to 4 do
+  begin
+    RegLV.Columns[n].Width := 65;
+    RegLV.Columns[n].MaxWidth := 65;
+    RegLV.Columns[n].MinWidth := 65;
+  end;
+
+  sRegLV.Columns[0].Width := 50;
+  sRegLV.Columns[0].MaxWidth := 50;
+  sRegLV.Columns[0].MinWidth := 50;
+  sRegLV.Columns[1].Width := 150;
+  sRegLV.Columns[1].MaxWidth := 150;
+  sRegLV.Columns[1].MinWidth := 150;
+  sRegLV.Columns[2].Width := 150;
+  sRegLV.Columns[2].MaxWidth := 150;
+  sRegLV.Columns[2].MinWidth := 150;
+end;
+
+procedure TForm1.FormDestroy(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+  begin
+    L[n].Free;
+  end;
+
+  Ring0.Free();
+
+  CloseHandle(LPTHandle);
+end;
+
+procedure TForm1.LBtnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  if TLabel(Sender).Caption = '0' then TLabel(Sender).Caption := '1'
+                                  else TLabel(Sender).Caption := '0';
+end;
+
+procedure TForm1.ReadBtnClick(Sender: TObject);
+var
+  n, i: DWORD;
+  Data: ULONG;
+  Address: ULONG;
+  Str: String;
+begin
+  MemLV.Clear;
+
+  Address := StrToInt64('$'+RAddrEdit.Text);
+  for i := 0 to $20 do
+  begin
+    MemLV.Items.Add.Caption := IntToStr(i+1);
+
+    Str := '';
+    MemLV.Items[MemLV.Items.Count-1].SubItems.add(IntToHex(Address)); // Адрес
+    Data := Ring0.Port.ReadDword(Address);
+
+    for n := 0 to 3 do
+    begin
+      MemLV.Items[MemLV.Items.Count-1].SubItems.add(ByteToStr(Data and $FF));
+      if (Data and $FF) <> 0 then Str := Str+Chr(Data and $FF)
+                             else Str := Str+' ';
+      Data := Data shr 8;
+    end;
+    MemLV.Items[MemLV.Items.Count-1].SubItems.add(Str);
+
+    if Address = $FFFFFFFF then Break;
+
+    Inc(Address, 4);
+  end;
+end;
+
+
+procedure TForm1.WriteBtnClick(Sender: TObject);
+var
+  Data, Data2: Int64;
+  Address: ULONG;
+
+begin
+  Address := StrToInt64('$'+WAddrEdit.Text);
+  Data := DWORD(GetDataFromLabs());
+  Ring0.Port.WriteDword(Address, Data);
+end;
+
+
+procedure TForm1.EditKeyPress(Sender: TObject; var Key: Char);
+begin
+   if not (char (Key) in ['a'..'f', 'A'..'F', '0'..'9', #8]) then Key := #0;
+end;
+
+
+function TForm1.GetDataFromLabs: Int64;
+var
+  n: byte;
+begin
+  Result := 0;
+
+  for n := 0 to 31 do
+  begin
+    Result := Result+(StrToInt(L[31-n].Caption) shl n);
+  end;
+end;
+
+
+procedure TForm1.All0BtnClick(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+    L[n].Caption := '0';
+end;
+
+procedure TForm1.All1BtnClick(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+    L[n].Caption := '1';
+end;
+
+procedure TForm1.RegReadBtnClick(Sender: TObject);
+var
+  n, i: DWORD;
+  Data: DWORD;
+  Data1, Data2, Data3, Data4, tData: byte;
+  Write_Address: ULONG;
+  Read_Address: ULONG;
+  RegNum, FuncNum, DevNum, BusNum: byte;
+begin
+  RegLV.Clear;
+  sRegLV.Clear;
+
+  Write_Address := $0CF8;
+  Read_Address  := $0CFC;
+  BusNum  := 3; // 6
+  DevNum  := 0; // 0
+  FuncNum := 2; // 0
+  for i := 0 to 31 do
+  begin
+    RegLV.Items.Add.Caption := IntToStr(i);
+    Regnum  := i;
+    Data := $80000000+(BusNum shl 16)+(DevNum shl 11)+(FuncNum shl 8)+(Regnum shl 2);
+    Ring0.Port.WriteDword(Write_Address, Data);
+    Data := Ring0.Port.ReadDword(Read_Address);
+    Data1 := byte(Data);
+    Data2 := byte(Data shr 8);
+    Data3 := byte(Data shr 16);
+    Data4 := byte(Data shr 24);
+
+    case i of
+      0: begin
+           PCIReg.VendorID := Data1+(Data2 shl 8);
+           sRegLV.Items.Add.Caption := '$00';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('VendorID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.VendorID, 4));
+
+           PCIReg.DeviceID := Data3+(Data4 shl 8);
+           sRegLV.Items.Add.Caption := '$02';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('DeviceID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.DeviceID, 4));
+         end;
+      1: begin
+           PCIReg.Command := Data1+(Data2 shl 8);;
+           sRegLV.Items.Add.Caption := '$04';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Command');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Command, 4));
+
+           PCIReg.Status := Data3+(Data4 shl 8);;
+           sRegLV.Items.Add.Caption := '$06';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Status');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Status, 4));
+         end;
+      2: begin
+           PCIReg.RevisionID := Data1;
+           sRegLV.Items.Add.Caption := '$08';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('RevisionID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.RevisionID, 2));
+
+           PCIReg.ClassCode := Data2+(Data3 shl 8)+(Data4 shl 16);
+           sRegLV.Items.Add.Caption := '$09';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('ClassCode');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.ClassCode, 6));
+         end;
+      3: begin
+           PCIReg.Undef1 := Data;
+           sRegLV.Items.Add.Caption := '$0C';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef1');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef1, 8));
+         end;
+      4: begin
+           PCIReg.IOBaseAddr0 := Data;
+           sRegLV.Items.Add.Caption := '$10';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('IOBaseAddr0');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.IOBaseAddr0, 8));
+         end;
+      5: begin
+           PCIReg.Undef2 := Data;
+           sRegLV.Items.Add.Caption := '$14';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef2');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef2, 8));
+         end;
+      6: begin
+           PCIReg.IOBaseAddr2 := Data;
+           sRegLV.Items.Add.Caption := '$18';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('IOBaseAddr2');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.IOBaseAddr2, 8));
+         end;
+      7: begin
+           PCIReg.Undef31 := Data;
+           sRegLV.Items.Add.Caption := '$1C';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef31');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef31, 8));
+         end;
+      8: begin
+           PCIReg.Undef32 := Data;
+           sRegLV.Items.Add.Caption := '$20';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef32');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef32, 8));
+         end;
+      9: begin
+           PCIReg.Undef33 := Data;
+           sRegLV.Items.Add.Caption := '$24';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef33');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef33, 8));
+         end;
+     10: begin
+           PCIReg.Undef34 := Data;
+           sRegLV.Items.Add.Caption := '$28';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef34');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef34, 8));
+         end;
+     11: begin
+           PCIReg.subVendorID := Data1+(Data2 shl 8);
+           sRegLV.Items.Add.Caption := '$2C';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('subVendorID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.subVendorID, 4));
+
+           PCIReg.subDeviceID := Data3+(Data4 shl 8);
+           sRegLV.Items.Add.Caption := '$2E';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('subDeviceID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.subDeviceID, 4));
+         end;
+     12: begin
+           PCIReg.Undef41 := Data;
+           sRegLV.Items.Add.Caption := '$30';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef41');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef41, 8));
+         end;
+     13: begin
+           PCIReg.Undef42 := Data;
+           sRegLV.Items.Add.Caption := '$34';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef42');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef42, 8));
+         end;
+     14: begin
+           PCIReg.Undef43 := Data;
+           sRegLV.Items.Add.Caption := '$38';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef43');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef43, 8));
+         end;
+      15: begin
+           PCIReg.InteruptLinePin := Data;
+           sRegLV.Items.Add.Caption := '$3C';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('InteruptLinePin');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.InteruptLinePin, 8));
+         end;
+    end;
+
+    for n := 0 to 3 do
+    begin
+      RegLV.Items[RegLV.Items.Count-1].SubItems.add('$'+IntToHex(Data and $FF, 2));
+      Data := Data shr 8;
+    end;
+  end;
+
+
+end;
+
+procedure TForm1.Button1Click(Sender: TObject);
+var
+  maj, min, rev, rel: byte;
+  Res: DWORD;
+  n, m, i, Buffer: byte;
+begin
+  Res := Ring0.Dll.GetDrvVersion(maj, min, rev, rel);
+  Res := Ring0.Dll.GetVersion(maj, min, rev, rel);
+  Res := Ring0.Dll.GetDrvType();
+
+  Res := Ring0.PCI.FindDeviceById(0, 0, 0);
+
+
+//  Res := Ring0.PCI.ReadConfigWord($CFC, 0);
+
+//  ShowMessage('Ver '+IntToStr(maj)+' '+IntToStr(min)+' '+IntToStr(rev)+' '+IntToStr(rel));
+
+//  ShowMessage(IntToStr(Res));
+
+{
+  for n := 0 to 100 do
+  begin
+    WriteFile(LPTHandle, Buffer, 1, Res, nil);
+    if Buffer = 1 then Buffer := 0
+                  else Buffer := 1;
+
+  end;
+}
+
+//  for n := 0 to 7 do
+//    for m := 0 to 7 do
+//      begin
+//        Res := Ring0.PCI.FindDeviceByClass(7, n, m, 0);
+//        if Res <> $FFFFFFFF then ShowMessage(IntToHex(Res)+' SubClass = '+IntToStr(n)+' ProgrInt = '+IntToStr(m));
+//      end;
+
+  for i := 0 to 7 do
+  begin
+//    Res := Ring0.PCI.FindDeviceByID($1C00, $3250, i);
+    Res := Ring0.PCI.FindDeviceByID($125B, $9100, i);
+    if Res <> $FFFFFFFF then ShowMessage(IntToHex(Res)+' Index = '+IntToStr(i));
+  end;
+
+  Res := Ring0.PCI.ReadConfigDWord($200, 0);
+  ShowMessage(IntToHex(Res));
+end;
+
+function TForm1.ByteToStr(Val: byte; Digits: byte=8): String;
+var
+  n: byte;
+begin
+  Result := '';
+
+  for n := Digits-1 downto 0 do
+  begin
+    Result := Result+IntTostr((Val shr n) and 1);
+  end;
+end;
+
+
+
+
+function TForm1.GetLPTInfo(iLPT: TLPTInfo): Boolean;
+var
+  Registry: TRegIniFile;
+  Str, Key0: String;
+  SL, SL1: TStringList;
+  n, i: DWORD;
+  P: byte;
+begin
+  Result := False;
+
+  Key0 := 'SYSTEM\CurrentControlSet\Enum\MF\';
+
+  SL := TStringList.Create();
+  SL1 := TStringList.Create();
+
+  try
+    Registry := TRegIniFile.Create('');
+    try
+      Registry.RootKey := HKEY_LOCAL_MACHINE;
+
+      if (not Registry.KeyExists(Key0)) then
+      begin
+         MessageDlg('LPT платы не найдены!', mtError, [mbOK], 0);
+         SL.Free();
+         Exit;
+      end;
+
+      Registry.OpenKeyReadOnly(Key0);
+
+      Registry.GetKeyNames(SL);
+      if SL.Count > 0 then
+        for n := 0 to SL.Count-1 do
+        begin
+          Str := UpperCase(SL[n]);
+          if Pos('PCI', Str) <> 0 then
+          begin
+            P := Pos('VEN', Str);
+//            Result.VendorID := StrToInt('$'+Copy(Str, P+4, 4));
+            P := Pos('DEV', Str);
+//            Result.DeviceID := StrToInt('$'+Copy(Str, P+4, 4));
+//            Memo1.Lines.Add(IntToHex(Result.VendorID)+' '+IntToHex(Result.DeviceID));
+          end;
+
+          Registry.OpenKeyReadOnly(SL[n]);
+          Registry.GetKeyNames(SL1);
+          for i := 0 to SL1.Count-1 do Memo1.Lines.Add(SL1[i]);
+
+        end;
+
+//      Registry.ReadString('', 'MF', 'x');
+
+//      ShowMessage(Str);
+
+
+
+
+//      Ini.OpenKey('Software\WaferViewer', False);                                                    //
+//      if Ini.ReadBinaryData('FormPosition', Rct, SizeOf(TRect)) = 0 then Rct := Screen.WorkAreaRect; //
+//      BoundsRect := Rct;                                                                             //
+//      if Ini.ReadBool('', 'Maximized', False) then self.WindowState := wsMaximized;                  //
+//      StatPath := Ini.ReadString('', 'StatPath', 'D:\Statistica');                                   //
+//      TmpColorChips := Ini.ReadInteger('', 'ShowChipsColor', clFuchsia);                             //
+//      TmpColorBkgrn := Ini.ReadInteger('', 'BkgrnColor', clSkyBlue);                                 //
+//      TmpColorGrid  := Ini.ReadInteger('', 'GridColor', clYellow);                                   //
+//      TmpViewOK_3D  := Ini.ReadInteger('', 'ViewOK_3D', 2);                                          //
+//      TmpViewAll    := Ini.ReadBool('', 'ViewAll', True);                                            //
+//      TmpViewGrid   := Ini.ReadBool('', 'ViewGrid', False);                                          //
+//      Ini.CloseKey;                                                                                  //
+                                                                                                     //
+//      Ini.RootKey := HKEY_CLASSES_ROOT;                                                              //
+//      Ini.WriteString('.sts', '', '!sts');                                                           //
+//      Ini.WriteString('!sts\DefaultIcon', '', ParamStr(0)+', 0');                                    //
+//      Ini.WriteString('!sts\shell\open\command', '', ParamStr(0)+' "%1"');                           //
+    finally                                                                                          //
+      Registry.Free;                                                                                      //
+    end;                                                                                             //
+  except                                                                                             //
+  end;                                                                                               //
+
+  SL1.Free();
+  SL.Free();
+end;
+
+
+end.

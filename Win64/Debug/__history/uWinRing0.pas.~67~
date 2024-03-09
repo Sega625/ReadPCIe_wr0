@@ -1,0 +1,217 @@
+unit uWinRing0;
+
+interface
+
+uses Winapi.Windows, Structs;
+
+
+
+
+type
+  TDLL = class
+  private
+    Status: Boolean;
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    function IsLoaded(): Boolean;
+    function GetStatus(): DWORD;
+    function GetVersion(var maj, min, rev, rel: byte): DWORD;
+
+    function GetDrvVersion(var maj, min, rev, rel: byte): DWORD;
+    function GetDrvType(): DWORD;
+  end;
+
+
+  TPort = class
+  private
+
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    procedure WriteDword(const adrr: WORD; const val: DWORD);
+    function  ReadDword(const adrr: WORD): DWORD;
+  end;
+
+
+  TPCI = class
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    procedure SetMaxBusIndex(const max: Byte);
+    function  ReadConfigByte (const pciAddr: DWORD; const regAddr: Byte): Byte;
+    function  ReadConfigWord (const pciAddr: DWORD; const regAddr: Byte): WORD;
+    function  ReadConfigDWord(const pciAddr: DWORD; const regAddr: Byte): DWORD;
+  end;
+
+
+  TMemory = class
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+  end;
+
+
+  TWinRing0 = class
+  public
+    DLL:  TDLL;
+    Port: TPort;
+    PCI:  TPCI;
+    Memory: TMemory;
+
+    constructor Create();
+    destructor  Destroy(); override;
+  end;
+
+
+implementation
+
+
+{ TWinRing }
+
+constructor TWinRing0.Create;
+begin
+  inherited Create();
+
+  DLL    := TDLL.Create();
+  Port   := TPort.Create();
+  PCI    := TPCI.Create();
+  Memory := TMemory.Create();
+end;
+
+destructor TWinRing0.Destroy;
+begin
+  Memory.Free();
+  PCI.Free();
+  Port.Free();
+  DLL.Free();
+
+  inherited;
+end;
+
+
+
+{ TDLL }
+
+constructor TDLL.Create;
+begin
+  inherited Create();
+
+  Status := InitializeOls();
+end;
+
+destructor TDLL.Destroy;
+begin
+  DeinitializeOls();
+
+  inherited;
+end;
+
+
+function TDLL.IsLoaded: Boolean;
+begin
+  Result := Status;
+end;
+
+function TDLL.GetStatus: DWORD;
+begin
+  Result := GetDllStatus();
+end;
+
+function TDLL.GetVersion(var maj, min, rev, rel: byte): DWORD;
+begin
+  Result := GetDllVersion(@maj, @min, @rev, @rel);
+end;
+
+
+function TDLL.GetDrvVersion(var maj, min, rev, rel: byte): DWORD;
+begin
+  Result := GetDriverVersion(@maj, @min, @rev, @rel);
+end;
+
+function TDLL.GetDrvType: DWORD;
+begin
+  Result := GetDriverType();
+end;
+
+
+
+{ TPort }
+
+constructor TPort.Create;
+begin
+  inherited Create();
+end;
+
+destructor TPort.Destroy;
+begin
+
+  inherited;
+end;
+
+
+procedure TPort.WriteDword(const adrr: WORD; const val: DWORD);
+begin
+  WriteIoPortDword(adrr, val);
+end;
+
+function TPort.ReadDword(const adrr: WORD): DWORD;
+begin
+  Result := ReadIoPortDword(adrr);
+end;
+
+
+
+{ TPCI }
+
+constructor TPCI.Create;
+begin
+  inherited Create();
+end;
+
+destructor TPCI.Destroy;
+begin
+
+  inherited;
+end;
+
+
+procedure TPCI.SetMaxBusIndex(const max: Byte);
+begin
+  SetPciMaxBusIndex(max);
+end;
+
+function TPCI.ReadConfigByte(const pciAddr: DWORD; const regAddr: Byte): Byte;
+begin
+  Result := ReadPciConfigByte(pciAddr, regAddr);
+end;
+
+function TPCI.ReadConfigWord(const pciAddr: DWORD; const regAddr: Byte): WORD;
+begin
+  Result := ReadPciConfigWord(pciAddr, regAddr);
+end;
+
+function TPCI.ReadConfigDWord(const pciAddr: DWORD; const regAddr: Byte): DWORD;
+begin
+  Result := ReadPciConfigDWord(pciAddr, regAddr);
+end;
+
+
+
+{ TMemory }
+
+constructor TMemory.Create;
+begin
+  inherited Create();
+end;
+
+destructor TMemory.Destroy;
+begin
+
+  inherited;
+end;
+
+end.

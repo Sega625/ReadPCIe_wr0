@@ -1,0 +1,268 @@
+unit GetPCILPTInfo;
+
+interface
+
+uses
+  Winapi.Windows, Vcl.Dialogs, System.Win.Registry, System.Classes, System.SysUtils;
+
+type
+  TLPTFullInfo = record
+    Name    : string;
+    FullName: string;
+    VendorID: WORD;
+    DeviceID: WORD;
+    BusN    : byte;
+    DevN    : byte;
+    FuncN   : byte;
+    Present : Boolean;
+    RegStr  : string;
+    PrefStr : string;
+  end;
+
+  TLPTInfo = record
+    Name    : string;
+    VendorID: WORD;
+    DeviceID: WORD;
+    BusN    : byte;
+    DevN    : byte;
+    FuncN   : byte;
+  end;
+  TLPTInfoMass = array of TLPTInfo;
+
+  TPCILPTInfo = class
+  public
+    constructor Create();
+    destructor  Destroy(); override;
+
+    function GetInfo(): TLPTInfoMass;
+  private
+    AllPortsInfo: array of TLPTFullInfo;
+    LPTInfo: TLPTInfoMass;
+
+    function Find_MF_LPT_ByReg(): WORD;
+  end;
+
+
+implementation
+
+{ TPCILPTInfo }
+
+constructor TPCILPTInfo.Create;
+begin
+  inherited Create();
+
+
+end;
+
+destructor TPCILPTInfo.Destroy;
+begin
+
+  inherited;
+end;
+
+
+function  TPCILPTInfo.Find_MF_LPT_ByReg(): WORD;
+var
+  Reg: TRegIniFile;
+  Str, Key0, tKey, s1: String;
+  SL, tSL1, tSL2: TStringList;
+  n, i, j: DWORD;
+  P: byte;
+  DevID, VendID: WORD;
+  Pres: Boolean;
+begin
+  Result := 0;
+
+  SetLength(AllPortsInfo, 0);
+
+  Key0 := 'SYSTEM\CurrentControlSet\Enum\MF\';
+  try
+    Reg := TRegIniFile.Create('');
+    try
+      Reg.RootKey := HKEY_LOCAL_MACHINE;
+
+      if (not Reg.KeyExists(Key0)) then
+      begin
+        MessageDlg('MF платы не найдены!', mtError, [mbOK], 0);
+        Exit;
+      end;
+
+      SL := TStringList.Create();
+      tSL1 := TStringList.Create();
+      tSL2 := TStringList.Create();
+
+      if not Reg.OpenKeyReadOnly(Key0) then ShowMessage('!');
+      Reg.GetKeyNames(SL);
+      Reg.CloseKey;
+      if SL.Count > 0 then
+        for n := 0 to SL.Count-1 do
+        begin
+//          Memo1.Lines.Add('--------------------------------------------------');
+//          Memo1.Lines.Add(SL[n]);
+          Str := UpperCase(SL[n]);
+          if Pos('PCI', Str) <> 0 then
+          begin
+            P := Pos('VEN', Str);
+            VendID := StrToInt('$'+Copy(Str, P+4, 4));
+            P := Pos('DEV', Str);
+            DevID := StrToInt('$'+Copy(Str, P+4, 4));
+ //           Memo1.Lines.Add('         '+IntToHex(VendID)+' '+IntToHex(DevID));
+          end;
+
+          tSL1 := TStringList.Create();
+
+          tKey := Key0+SL[n]+'\';
+          if not Reg.OpenKeyReadOnly(tKey) then ShowMessage('!!');
+          Reg.GetKeyNames(tSL1);
+          Reg.CloseKey;
+          if tSL1.Count > 0 then
+            for i := 0 to tSL1.Count-1 do
+            begin
+              Str := tSL1[i];
+//              Memo1.Lines.Add(Str);
+
+              if not Reg.OpenKeyReadOnly(tKey+tSL1[i]) then ShowMessage('!!!');
+              Reg.GetKeyNames(tSL2);
+              Reg.CloseKey;
+              if tSL2.Count > 0 then
+              begin
+                for j := 0 to tSL2.Count-1 do
+                begin
+                  Pres := False;
+                  Str := UpperCase(tSL2[j]);
+//                  Memo1.Lines.Add(tSL2[j]);
+                  if Pos('DEVICE', Str) <> 0 then
+                  begin
+                    Str := Reg.ReadString(tKey+tSL1[i]+'\'+tSL2[j], 'PortName', 'x');
+//                    Memo1.Lines.Add('-> '+Str);
+
+                    SetLength(AllPortsInfo, Length(AllPortsInfo)+1);
+                    AllPortsInfo[Length(AllPortsInfo)-1].Name := Str;
+                    AllPortsInfo[Length(AllPortsInfo)-1].VendorID := VendID;
+                    AllPortsInfo[Length(AllPortsInfo)-1].DeviceID := DevID;
+                    AllPortsInfo[Length(AllPortsInfo)-1].Present  := Pres;
+                    AllPortsInfo[Length(AllPortsInfo)-1].RegStr   := SL[n];   // Название для поиска в разделе PCI
+                    AllPortsInfo[Length(AllPortsInfo)-1].PrefStr  := tSL1[i]; // Префикс для поиска в разделе PCI
+
+                    Str := UpperCase(Reg.ReadString(tKey+tSL1[i]+'\', 'FriendlyName', 'x'));
+                    AllPortsInfo[Length(AllPortsInfo)-1].FullName := Str;
+                  end;
+                  if Pos('CONTROL', Str) <> 0 then
+                  begin
+                    Pres := True;
+                    AllPortsInfo[Length(AllPortsInfo)-1].Present := Pres;
+                  end;
+                end;
+              end;
+            end;
+
+        end;
+
+    finally
+      Reg.Free;
+    end;
+  except
+  end;
+
+
+  Key0 := 'SYSTEM\CurrentControlSet\Enum\PCI\';
+  try
+    Reg := TRegIniFile.Create('');
+    try
+      Reg.RootKey := HKEY_LOCAL_MACHINE;
+
+      if (not Reg.KeyExists(Key0)) then
+      begin
+        MessageDlg('PCI платы не найдены!', mtError, [mbOK], 0);
+        Exit;
+      end;
+
+      if not Reg.OpenKeyReadOnly(Key0) then ShowMessage('!');
+      Reg.GetKeyNames(SL);
+      Reg.CloseKey;
+      if SL.Count > 0 then
+        for n := 0 to SL.Count-1 do // Цикл PCI устройств
+        begin
+//          Memo1.Lines.Add('--------------------------------------------------');
+//          Memo1.Lines.Add(SL[n]);
+          Str := SL[n];
+          for j := 0 to Length(AllPortsInfo)-1 do
+            if Pos(SL[n], AllPortsInfo[j].RegStr) <> 0 then
+            begin
+              tSL1 := TStringList.Create();
+
+              tKey := Key0+SL[n]+'\';
+              if not Reg.OpenKeyReadOnly(tKey) then ShowMessage('!!');
+              Reg.GetKeyNames(tSL1);
+              Reg.CloseKey;
+              if tSL1.Count > 0 then
+                for i := 0 to tSL1.Count-1 do
+                begin
+                  Str := Reg.ReadString(tKey+tSL1[i], 'ParentIdPrefix', 'x');
+                  if Pos(Str, AllPortsInfo[j].PrefStr) <> 0 then
+                  begin
+//                    Memo1.Lines.Add(Str);
+                    Str := Reg.ReadString(tKey+tSL1[i], 'LocationInformation', 'x');
+
+                    Delete(Str, 1, Pos('(', Str));
+                    P := Pos(',', Str);
+                    AllPortsInfo[j].BusN := StrToInt(Copy(Str, 1, P-1));
+//                    Memo1.Lines.Add(IntToStr(AllPortsInfo[j].BusN));
+
+                    Delete(Str, 1, P);
+                    P := Pos(',', Str);
+                    AllPortsInfo[j].DevN := StrToInt(Copy(Str, 1, P-1));
+//                    Memo1.Lines.Add(IntToStr(AllPortsInfo[j].DevN));
+
+                    Delete(Str, 1, P);
+                    P := Pos(')', Str);
+                    AllPortsInfo[j].FuncN := StrToInt(Copy(Str, 1, P-1));
+//                    Memo1.Lines.Add(IntToStr(AllPortsInfo[j].FuncN));
+                  end;
+                end;
+            end;
+        end;
+
+    finally
+      Reg.Free;
+    end;
+  except
+  end;
+
+
+  SL.Free();
+  tSL1.Free();
+  tSL2.Free();
+
+  SetLength(LPTInfo, 0);
+  for n := 0 to Length(AllPortsInfo)-1 do
+    if (AllPortsInfo[n].Present) and (Pos('LPT', UpperCase(AllPortsInfo[n].Name)) <> 0)  then
+    begin
+      SetLength(LPTInfo, Length(LPTInfo)+1);
+
+      LPTInfo[Length(LPTInfo)-1].Name     := AllPortsInfo[n].Name;
+      LPTInfo[Length(LPTInfo)-1].VendorID := AllPortsInfo[n].VendorID;
+      LPTInfo[Length(LPTInfo)-1].DeviceID := AllPortsInfo[n].DeviceID;
+      LPTInfo[Length(LPTInfo)-1].BusN     := AllPortsInfo[n].BusN;
+      LPTInfo[Length(LPTInfo)-1].DevN     := AllPortsInfo[n].DevN;
+      LPTInfo[Length(LPTInfo)-1].FuncN    := AllPortsInfo[n].FuncN;
+    end;
+
+  Result := Length(AllPortsInfo);
+end;
+
+
+function TPCILPTInfo.GetInfo: TLPTInfoMass;
+var
+  Count, n: WORD;
+begin
+  Result := nil;
+  Count := Find_MF_LPT_ByReg();
+  if Count > 0 then
+  begin
+    SetLength(Result, n);
+    Result := LPTInfo;
+  end;
+end;
+
+end.

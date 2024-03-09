@@ -1,0 +1,345 @@
+unit uReadPCIe_wr0;
+
+interface
+
+uses
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.ComCtrls, WinRing0;
+
+type
+  TPCIReg = record
+    VendorID:    WORD;
+    DeviceID:    WORD;
+    Command:     WORD;
+    Status:      WORD;
+    RevisionID:  byte;
+    ClassCode:   DWORD;
+    Undef1:      DWORD;
+    IOBaseAddr0: DWORD;
+    Undef2:      DWORD;
+    IOBaseAddr2: DWORD;
+    Undef31:     DWORD;
+    Undef32:     DWORD;
+    Undef33:     DWORD;
+    Undef34:     DWORD;
+    subVendorID: WORD;
+    subDeviceID: WORD;
+    Undef41:     DWORD;
+    Undef42:     DWORD;
+    Undef43:     DWORD;
+    InteruptLinePin: DWORD;
+  end;
+
+  TForm1 = class(TForm)
+    ReadBtn: TButton;
+    RAddrEdit: TEdit;
+    MemLV: TListView;
+    Label20: TLabel;
+    WriteBtn: TButton;
+    WAddrEdit: TEdit;
+    Label1: TLabel;
+    All0Btn: TButton;
+    All1Btn: TButton;
+    GroupBox1: TGroupBox;
+    RegReadBtn: TButton;
+    RegLV: TListView;
+    sRegLV: TListView;
+    procedure ReadBtnClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure EditKeyPress(Sender: TObject; var Key: Char);
+    procedure WriteBtnClick(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure All0BtnClick(Sender: TObject);
+    procedure All1BtnClick(Sender: TObject);
+    procedure RegReadBtnClick(Sender: TObject);
+  private
+    Ring0: TWinRing0;
+    PCIReg: TPCIReg;
+    L: array [0..31] of TLabel;
+
+    procedure LBtnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+
+    function GetDataFromLabs(): Int64;
+    function ByteToStr(Val: byte; Digits: byte=8): String;
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+procedure TForm1.FormCreate(Sender: TObject);
+var
+  n, offset: byte;
+begin
+  Ring0 := TWinRing0.Create();
+
+  offset := 0;
+  for n := 0 to 31 do
+  begin
+    L[n] := TLabel.Create(self);
+    with L[n] do
+    begin
+      if (n mod 4) = 0 then Inc(offset, 4);
+      Left := 8+n*9+offset;
+      Top  := 90;
+      Parent := Form1;
+
+      Font.Size := 12;
+      Font.Color := clBlue;
+      Caption := '0';
+
+      Tag := n;
+//      OnClick := LBtnClick;
+      OnMouseDown := LBtnMouseDown;
+    end;
+  end;
+
+  MemLV.Columns[0].Width := 50;
+  MemLV.Columns[0].MaxWidth := 50;
+  MemLV.Columns[0].MinWidth := 50;
+  MemLV.Columns[1].Width := 80;
+  MemLV.Columns[1].MaxWidth := 80;
+  MemLV.Columns[1].MinWidth := 80;
+  for n := 2 to 5 do
+  begin
+    MemLV.Columns[n].Width := 75;
+    MemLV.Columns[n].MaxWidth := 75;
+    MemLV.Columns[n].MinWidth := 75;
+  end;
+  MemLV.Columns[6].Width := 80;
+  MemLV.Columns[6].MaxWidth := 80;
+  MemLV.Columns[6].MinWidth := 80;
+
+  RegLV.Columns[0].Width := 30;
+  RegLV.Columns[0].MaxWidth := 30;
+  RegLV.Columns[0].MinWidth := 30;
+  for n := 1 to 4 do
+  begin
+    RegLV.Columns[n].Width := 65;
+    RegLV.Columns[n].MaxWidth := 65;
+    RegLV.Columns[n].MinWidth := 65;
+  end;
+
+  sRegLV.Columns[0].Width := 50;
+  sRegLV.Columns[0].MaxWidth := 50;
+  sRegLV.Columns[0].MinWidth := 50;
+  sRegLV.Columns[1].Width := 150;
+  sRegLV.Columns[1].MaxWidth := 150;
+  sRegLV.Columns[1].MinWidth := 150;
+  sRegLV.Columns[2].Width := 150;
+  sRegLV.Columns[2].MaxWidth := 150;
+  sRegLV.Columns[2].MinWidth := 150;
+end;
+
+procedure TForm1.FormDestroy(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+  begin
+    L[n].Free;
+  end;
+
+  Ring0.Free();
+end;
+
+procedure TForm1.LBtnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  if TLabel(Sender).Caption = '0' then TLabel(Sender).Caption := '1'
+                                  else TLabel(Sender).Caption := '0';
+end;
+
+procedure TForm1.ReadBtnClick(Sender: TObject);
+var
+  n, i: DWORD;
+  Data: ULONG;
+  Address: ULONG;
+  Str: String;
+begin
+  MemLV.Clear;
+
+  Address := StrToInt64('$'+RAddrEdit.Text);
+  for i := 0 to $20 do
+  begin
+    MemLV.Items.Add.Caption := IntToStr(i+1);
+
+    Str := '';
+    MemLV.Items[MemLV.Items.Count-1].SubItems.add(IntToHex(Address)); // Адрес
+    Data := Ring0.ReadIoPortDword(Address);
+
+    for n := 0 to 3 do
+    begin
+      MemLV.Items[MemLV.Items.Count-1].SubItems.add(ByteToStr(Data and $FF));
+      if (Data and $FF) <> 0 then Str := Str+Chr(Data and $FF)
+                             else Str := Str+' ';
+      Data := Data shr 8;
+    end;
+    MemLV.Items[MemLV.Items.Count-1].SubItems.add(Str);
+
+    if Address = $FFFFFFFF then Break;
+
+    Inc(Address, 4);
+  end;
+end;
+
+
+procedure TForm1.WriteBtnClick(Sender: TObject);
+var
+  Data, Data2: Int64;
+  Address: ULONG;
+
+begin
+  Address := StrToInt64('$'+WAddrEdit.Text);
+  Data := DWORD(GetDataFromLabs());
+  Ring0.WriteIoPortDword(Address, Data);
+//  ShowMessage(IntToStr(Address)+' - '+IntToStr(Data));
+//  DlPortWritePortUlong(Address, Data);
+//  DlPortWritePortUshort(Address, Data);
+
+end;
+
+
+procedure TForm1.EditKeyPress(Sender: TObject; var Key: Char);
+begin
+   if not (char (Key) in ['a'..'f', 'A'..'F', '0'..'9', #8]) then Key := #0;
+end;
+
+
+function TForm1.GetDataFromLabs: Int64;
+var
+  n: byte;
+begin
+  Result := 0;
+
+  for n := 0 to 31 do
+  begin
+    Result := Result+(StrToInt(L[31-n].Caption) shl n);
+  end;
+end;
+
+
+
+procedure TForm1.All0BtnClick(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+    L[n].Caption := '0';
+end;
+
+procedure TForm1.All1BtnClick(Sender: TObject);
+var
+  n: byte;
+begin
+  for n := 0 to 31 do
+    L[n].Caption := '1';
+end;
+
+procedure TForm1.RegReadBtnClick(Sender: TObject);
+var
+  n, i: DWORD;
+  Data: DWORD;
+  Data1, Data2, Data3, Data4, tData: byte;
+  Write_Address: ULONG;
+  Read_Address: ULONG;
+  RegNum, FuncNum, DevNum, BusNum: byte;
+begin
+  RegLV.Clear;
+  sRegLV.Clear;
+
+  Write_Address := $0CF8;
+  Read_Address  := $0CFC;
+  BusNum  := 2;
+  DevNum  := 0;
+  FuncNum := 0;
+  for i := 0 to 31 do
+  begin
+    RegLV.Items.Add.Caption := IntToStr(i);
+    Regnum  := i;
+    Data := $80000000+(BusNum shl 16)+(DevNum shl 11)+(FuncNum shl 8)+(Regnum shl 2);
+    Ring0.WriteIoPortDword(Write_Address, Data);
+    Data := Ring0.ReadIoPortDword(Read_Address);
+    Data1 := byte(Data);
+    Data2 := byte(Data shr 8);
+    Data3 := byte(Data shr 16);
+    Data4 := byte(Data shr 24);
+
+    case i of
+      0: begin
+           PCIReg.VendorID := Data1+(Data2 shl 8);
+           sRegLV.Items.Add.Caption := '$00';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('VendorID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.VendorID, 4));
+
+           PCIReg.DeviceID := Data3+(Data4 shl 8);
+           sRegLV.Items.Add.Caption := '$01';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('DeviceID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.DeviceID, 4));
+         end;
+      1: begin
+           PCIReg.Command := Data1+(Data2 shl 8);;
+           sRegLV.Items.Add.Caption := '$02';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Command');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Command, 4));
+
+           PCIReg.Status := Data3+(Data4 shl 8);;
+           sRegLV.Items.Add.Caption := '$03';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Status');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Status, 4));
+         end;
+      3: begin
+           PCIReg.RevisionID := Data1;
+           sRegLV.Items.Add.Caption := '$04';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('RevisionID');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.RevisionID, 2));
+
+           PCIReg.ClassCode := Data2+(Data3 shl 8)+(Data4 shl 16);
+           sRegLV.Items.Add.Caption := '$05';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('ClassCode');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.ClassCode, 6));
+         end;
+      4: begin
+           PCIReg.Undef1 := Data;
+           sRegLV.Items.Add.Caption := '$06';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('Undef1');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.Undef1, 8));
+           PCIReg.ClassCode := (Data shr 8);
+         end;
+      5: begin
+           PCIReg.IOBaseAddr0 := Data;
+           sRegLV.Items.Add.Caption := '$07';
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('IOBaseAddr0');
+           sRegLV.Items[sRegLV.Items.Count-1].SubItems.add('$'+IntToHex(PCIReg.IOBaseAddr0, 4));
+           PCIReg.ClassCode := (Data shr 8);
+         end;
+    end;
+
+    for n := 0 to 3 do
+    begin
+      RegLV.Items[RegLV.Items.Count-1].SubItems.add('$'+IntToHex(Data and $FF, 2));
+      Data := Data shr 8;
+    end;
+  end;
+
+
+end;
+
+function TForm1.ByteToStr(Val: byte; Digits: byte=8): String;
+var
+  n: byte;
+begin
+  Result := '';
+
+  for n := Digits-1 downto 0 do
+  begin
+    Result := Result+IntTostr((Val shr n) and 1);
+  end;
+end;
+
+
+end.
